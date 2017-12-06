@@ -9,6 +9,10 @@ final class Post: Model {
     
     /// The content of the post
     var content: String
+    var userID: Identifier?
+    var user: Parent<Post, User> {
+        return parent(id: userID)
+    }
     
     /// The column names for `id` and `content` in the database
     struct Keys {
@@ -17,8 +21,9 @@ final class Post: Model {
     }
 
     /// Creates a new Post
-    init(content: String) {
+    init(content: String, user: User) {
         self.content = content
+        self.userID = user.id
     }
 
     // MARK: Fluent Serialization
@@ -27,12 +32,14 @@ final class Post: Model {
     /// database row
     init(row: Row) throws {
         content = try row.get(Post.Keys.content)
+        userID = try row.get(User.foreignIdKey)
     }
 
     // Serializes the Post to the database
     func makeRow() throws -> Row {
         var row = Row()
         try row.set(Post.Keys.content, content)
+        try row.set(User.foreignIdKey, userID)
         return row
     }
 }
@@ -46,6 +53,7 @@ extension Post: Preparation {
         try database.create(self) { builder in
             builder.id()
             builder.string(Post.Keys.content)
+            builder.parent(User.self)
         }
     }
 
@@ -64,8 +72,13 @@ extension Post: Preparation {
 //
 extension Post: JSONConvertible {
     convenience init(json: JSON) throws {
+        let userID: Identifier = try json.get("user_id")
+        guard let user = try User.find(userID) else {
+            throw Abort.badRequest
+        }
         self.init(
-            content: try json.get(Post.Keys.content)
+            content: try json.get(Post.Keys.content),
+            user: user
         )
     }
     
@@ -73,6 +86,7 @@ extension Post: JSONConvertible {
         var json = JSON()
         try json.set(Post.Keys.id, id)
         try json.set(Post.Keys.content, content)
+        try json.set("user_id", userID)
         return json
     }
 }
