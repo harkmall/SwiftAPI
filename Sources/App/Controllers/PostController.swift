@@ -1,69 +1,61 @@
 import Vapor
 import HTTP
-
+import AuthProvider
 
 struct PostController {
     func addRoutes(to drop: Droplet) {
-        let postsGroup = drop.grouped("posts")
-        postsGroup.get("", handler: allPosts)
-        postsGroup.post("", handler: savePost)
-        postsGroup.get(Post.parameter, handler: getPost)
-        postsGroup.delete(Post.parameter, handler: deletePost)
-        postsGroup.delete("", handler: deleteAllPosts)
-        postsGroup.patch(Post.parameter, handler: updatePost)
-        postsGroup.put(Post.parameter, handler: replacePost)
-        postsGroup.get(Post.parameter, "user", handler: user)
-    }
-    
-    func allPosts(_ req: Request) throws -> ResponseRepresentable {
-        return try Post.all().makeJSON()
-    }
-    
-    func savePost(_ req: Request) throws -> ResponseRepresentable {
-        let post = try req.post()
-        try post.save()
-        return post
-    }
-
-    func getPost(_ req: Request) throws -> ResponseRepresentable {
-        let post = try req.postParam()
-        return post
-    }
-    
-    func deletePost(_ req: Request) throws -> ResponseRepresentable {
-        let post = try req.postParam()
-        try post.delete()
-        return Response(status: .ok)
-    }
-    
-    func deleteAllPosts(_ req: Request) throws -> ResponseRepresentable {
-        try Post.makeQuery().delete()
-        return Response(status: .ok)
-    }
-    
-    func updatePost(_ req: Request) throws -> ResponseRepresentable {
-        let post = try req.postParam()
-        try post.update(for: req)
-        try post.save()
-        return post
-    }
-
-    func replacePost(_ req: Request) throws -> ResponseRepresentable {
-        let post = try req.postParam()
-        let new = try req.post()
+        let postsGroup = drop.grouped("posts").grouped(TokenAuthenticationMiddleware(User.self))
         
-        post.content = new.content
-        try post.save()
-        
-        return post
-    }
-    
-    func user(_ req: Request) throws -> ResponseRepresentable {
-        let post = try req.postParam()
-        guard let user = try post.user.get() else {
-            throw Abort.notFound
+        postsGroup.get("") { req in
+            return try Post.all().makeJSON()
         }
-        return user
+        
+        postsGroup.post("") { req in
+            let post = try req.post()
+            try post.save()
+            return post
+        }
+        
+        postsGroup.get(Post.parameter) { req in
+            let post = try req.postParam()
+            return post
+        }
+        
+        postsGroup.delete(Post.parameter) { req in
+            let post = try req.postParam()
+            try post.delete()
+            return Response(status: .ok)
+        }
+        
+        postsGroup.delete("") { req in
+            try Post.makeQuery().delete()
+            return Response(status: .ok)
+        }
+        
+        postsGroup.patch(Post.parameter) { req in
+            let post = try req.postParam()
+            try post.update(for: req)
+            try post.save()
+            return post
+        }
+        
+        postsGroup.put(Post.parameter) { req in
+            let post = try req.postParam()
+            let new = try req.post()
+            
+            post.content = new.content
+            try post.save()
+            
+            return post
+        }
+        
+        postsGroup.get(Post.parameter, "user") { req in
+            let post = try req.postParam()
+            guard let user = try post.user.get() else {
+                throw Abort.notFound
+            }
+            return user
+        }
     }
 }
 
@@ -72,7 +64,8 @@ extension Request {
         guard let json = json else {
             throw Abort.badRequest
         }
-        return try Post(json: json)
+        let authedUser = try user()
+        return try Post(content: json.get(Post.Keys.content), user: authedUser)
     }
     
     func postParam() throws -> Post {

@@ -22,5 +22,6 @@ extension Config {
     private func setupPreparations() throws {
         preparations.append(User.self)
         preparations.append(Post.self)
+        preparations.append(Token.self)
     }
 }

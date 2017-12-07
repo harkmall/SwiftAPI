@@ -9,81 +9,98 @@ import Foundation
 import Vapor
 import HTTP
 import Sessions
+import AuthProvider
 
 struct UserController {
     func addRoutes(to drop: Droplet) {
-        let usersGroup = drop.grouped("users")
-        usersGroup.get("", handler: allUsers)
-        usersGroup.post("", handler: saveUser)
-        usersGroup.delete("", handler: deleteAllUsers)
-        usersGroup.get(User.parameter, handler: getUser)
-        usersGroup.delete(User.parameter, handler: deleteUser)
-        usersGroup.patch(User.parameter, handler: updateUser)
-        usersGroup.put(User.parameter, handler: replaceUser)
-        usersGroup.get(User.parameter, "posts", handler: posts)
-    }
-    
-    func allUsers(_ req: Request) throws -> ResponseRepresentable {
-        return try User.all().makeJSON()
-    }
-    
-    func saveUser(_ req: Request) throws -> ResponseRepresentable {
-        let user = try req.user()
-        try user.save()
-        return user
-    }
-    
-    func getUser(_ req: Request) throws -> ResponseRepresentable {
-        let user = try req.userParam()
-        return user
-    }
-    
-    func deleteUser(_ req: Request) throws -> ResponseRepresentable {
-        let user = try req.userParam()
-        try user.delete()
-        return Response(status: .ok)
-    }
-    
-    func deleteAllUsers(_ req: Request) throws -> ResponseRepresentable {
-        try User.makeQuery().delete()
-        return Response(status: .ok)
-    }
-    
-    func updateUser(_ req: Request) throws -> ResponseRepresentable {
-        let user = try req.userParam()
-        try user.update(for: req)
-        try user.save()
-        return user
-    }
-    
-    func replaceUser(_ req: Request) throws -> ResponseRepresentable {
-        let new = try req.user()
-        let user = try req.userParam()
-
-        user.name = new.name
-        user.location = new.location
-        user.age = new.age
-        try user.save()
         
-        return user
-    }
-    
-    func posts(_ req: Request) throws -> ResponseRepresentable {
-        let user = try req.userParam()
-        return try user.posts.all().makeJSON()
+        let usersGroup = drop.grouped("users")
+       
+        let passwordProtectedGroup = usersGroup.grouped(PasswordAuthenticationMiddleware(User.self))
+        
+        passwordProtectedGroup.post("login") { req in
+            print("something")
+            let user = try req.user()
+            let token = try Token.generate(for: user)
+            try token.save()
+            return token
+        }
+        
+        let tokenProtectedGroup = usersGroup.grouped(TokenAuthenticationMiddleware(User.self))
+        
+        tokenProtectedGroup.get("") { req in
+            return try User.all().makeJSON()
+        }
+        
+        tokenProtectedGroup.get("/me") { req in
+            let user = try req.user()
+            return user
+        }
+        
+        tokenProtectedGroup.delete("/me") { req in
+            let user = try req.user()
+            try user.delete()
+            return Response(status: .ok)
+        }
+        
+        tokenProtectedGroup.patch("/me") { req in
+            let user = try req.user()
+            try user.update(for: req)
+            try user.save()
+            return user
+        }
+        
+        tokenProtectedGroup.put("/me") { req in
+            guard let json = req.json else {
+                throw Abort.badRequest
+            }
+            let new = try User(json: json)
+            let user = try req.user()
+            
+            user.name = new.name
+            user.location = new.location
+            user.age = new.age
+            try user.save()
+            
+            return user
+        }
+        
+        tokenProtectedGroup.get("posts") { req in
+            let user = try req.user()
+            return try user.posts.all().makeJSON()
+        }
+        
+        
+        usersGroup.post("") { req in
+            
+            guard let json = req.json else {
+                throw Abort(.badRequest)
+            }
+            
+            let user = try User(json: json)
+            
+            // ensure no user with this email already exists
+            guard try User.makeQuery().filter("email", user.email).first() == nil else {
+                throw Abort(.badRequest, reason: "A user with that email already exists.")
+            }
+            
+            // require a plaintext password is supplied
+            guard let password = json["password"]?.string else {
+                throw Abort(.badRequest)
+            }
+            
+            // hash the password and set it on the user
+            user.password = try drop.hash.make(password.makeBytes()).makeString()
+            
+            try user.save()
+            return user
+        }
+        
+        usersGroup.delete("") { req in
+            try User.makeQuery().delete()
+            return Response(status: .ok)
+        }
     }
     
 }
 
-extension Request {
-    func user() throws -> User {
-        guard let json = json else {
-            throw Abort.badRequest
-        }
-        return try User(json: json)
-    }
-    
-    func userParam() throws -> User {
-        return try parameters.next(User.self)
-    }
-}
